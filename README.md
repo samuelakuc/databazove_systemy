@@ -7,4 +7,4 @@ Projekt obsahuje ... typy údajov
 Analýza dát bude zameraná najmä na sledovanie vývoja cien v čase pre jednotlivé uzly a regióny, ako aj porovnanie vplyvu používania obnoviteľných zdrojov ako elektrickej energie. Analýza bude zameraná aj na určenie presnosti predikcii o spotrebe elektrickej energie. 
 
 Staging diagram 
-![Staging ERD](.staging_diagram.png)
+![Staging ERD](staging_diagram.png)
