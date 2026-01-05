@@ -31,7 +31,6 @@ from yes_energy__sample_data.yes_energy_sample.ds_object_list_sample;
 
 select * from stg_nodes limit 50;
 
-
 create or replace table stg_times AS
 SELECT datetime, 
 marketday, 
@@ -107,4 +106,162 @@ and objectid = 10000712973
 group by objectid, trunc(dateadd('second', 3599, datetime), 'hour');
 
 select * from stg_real_solar limit 50;
+
+LOAD(dim tabulky a ich naplnenie)
+
+create or replace table dim_datetime(
+id int autoincrement primary key,
+datetime datetime,
+marketday date,
+hour int,
+day int,
+month int,
+year int,
+onpeak boolean,
+offpeak boolean,
+wepeak boolean,
+wdpeak boolean
+);
+
+insert into dim_datetime(
+datetime,
+marketday,
+hour,
+day,
+month,
+year,
+onpeak,
+offpeak,
+wepeak,
+wdpeak
+)
+select distinct
+datetime,
+marketday,
+extract(hour FROM datetime) as hour,
+extract(day FROM datetime) as day,
+extract(month FROM datetime) as month,
+extract(year FROM datetime) as year,
+onpeak,
+offpeak,
+wepeak,
+wdpeak
+FROM stg_times;
+
+select * from dim_datetime order by id limit 10;
+
+create or replace table dim_price_nodes(
+id int autoincrement primary key,
+objectid int,
+objectname varchar,
+zone varchar
+);
+
+merge into dim_price_nodes tgt
+using(
+select distinct
+objectid,
+objectname,
+zone
+from stg_nodes
+where objecttype = 'price_node'
+) src
+on tgt.objectid = src.objectid
+
+when matched then
+update set
+tgt.objectname = src.objectname,
+tgt.zone = src.zone
+
+when not matched then
+insert(
+objectid,
+objectname,
+zone
+)
+values(
+src.objectid,
+src.objectname,
+src.zone
+);
+
+select * from dim_price_nodes limit 10;
+
+create or replace table dim_load_zone(
+id int autoincrement primary key,
+objectid int,
+objectname varchar,
+zone varchar,
+valid_from date,
+valid_to date,
+is_current boolean
+);
+
+merge into dim_load_zone tgt
+using(
+select distinct
+objectid,
+objectname,
+zone
+from stg_nodes
+where objecttype = 'load_zone'
+) src 
+on tgt.objectid = src.objectid
+and tgt.is_current = true 
+
+when matched and(
+tgt.objectname != src.objectname
+or tgt.zone != src.zone)
+then
+update set 
+tgt.valid_to = current_timestamp(),
+tgt.is_current = false;
+
+
+insert into dim_load_zone(
+id,
+objectid,
+objectname,
+zone,
+valid_from,
+valid_to,
+is_current
+)
+select 
+row_number() over(order by src.objectid) as id,
+src.objectid,
+src.objectname,
+src.zone,
+current_timestamp(),
+null,
+true
+from(
+select distinct 
+objectid,
+objectname,
+zone
+from stg_nodes
+where objecttype = 'load_zone'
+) src
+left join dim_load_zone tgt
+on src.objectid = tgt.objectid and tgt.is_current = true
+where tgt.objectid is null
+or tgt.objectname != src.objectname
+or tgt.zone != src.zone;
+
+
+select * from dim_load_zone limit 10;
+
+create or replace table dim_generation_type(
+id int autoincrement primary key,
+generation_type varchar
+);
+
+insert into dim_generation_type(generation_type)
+values
+('Wind'),
+('Solar'),
+('Load');
+
+select * from dim_generation_type;
 
