@@ -107,6 +107,8 @@ group by objectid, trunc(dateadd('second', 3599, datetime), 'hour');
 
 select * from stg_real_solar limit 50;
 
+
+
 LOAD(dim tabulky a ich naplnenie)
 
 create or replace table dim_datetime(
@@ -265,3 +267,126 @@ values
 
 select * from dim_generation_type;
 
+
+
+TRANSFORM (fact table a jej naplnenie)
+   
+create or replace table fact_power_prices(
+id int autoincrement primary key,
+datetime_id int,
+price_nodes_id int,
+load_zone_id int,
+generation_type_id int,
+dalmp number(10,2),
+rtlmp number(10,2),
+daily_dalmp_stddev number(10,2),
+monthly_dalmp_stddev number(10,2),
+load_forecast number(10,2),
+net_load_forecast number(10,2),
+rt_load number(10,2),
+wind_gen_forecast number(10,2),
+wind_gen_real number(10,2),
+solar_gen_forecast number(10,2),
+solar_gen_real number(10,2),
+net_load_rt number(10,2)
+);
+
+
+//LOAD INSERT
+insert into fact_power_prices(
+datetime_id,
+price_nodes_id,
+load_zone_id,
+generation_type_id,
+dalmp,
+rtlmp,
+daily_dalmp_stddev,
+monthly_dalmp_stddev,
+load_forecast,
+net_load_forecast,
+rt_load,
+net_load_rt
+)
+select
+dt.id as datetime_id,
+pn.id as price_nodes_id,
+lz.id as load_zone_id,
+135690 as generation_type_id,
+pr.dalmp,
+pr.rtlmp,
+stddev(pr.dalmp) over(partition by dt.marketday) as daily_dalmp_stddev,
+stddev(pr.dalmp) over(partition by month(dt.marketday)) as monthly_dalmp_stddev,
+lf.value as load_forecast,
+lf.value - wf.value - sf.value as net_load_forecast,
+ld.load_gen as rt_load,
+ld.load_gen - wg.wind_gen - sg.solar_gen as net_load_rt
+from dim_datetime dt
+inner join stg_prices pr on pr.datetime = dt.datetime
+inner join dim_price_nodes pn on pn.objectid = pr.objectid
+inner join dim_load_zone lz on lz.objectid = 10000712973 and lz.is_current = true
+left join stg_load_forecast lf on lf.datetime = dt.datetime and lf.datatypeid = 19060
+left join stg_load_forecast wf on wf.datetime = dt.datetime and wf.datatypeid = 9285
+left join stg_load_forecast sf on sf.datetime = dt.datetime and sf.datatypeid = 662
+left join stg_real_load ld on ld.datetime = dt.datetime
+left join stg_real_wind wg on wg.datetime = dt.datetime
+left join stg_real_solar sg on sg.datetime = dt.datetime;
+
+
+
+//WIND INSERT
+insert into fact_power_prices(
+datetime_id,
+price_nodes_id,
+load_zone_id,
+generation_type_id,
+dalmp,
+rtlmp,
+wind_gen_forecast,
+wind_gen_real
+)
+select
+dt.id as datetime_id,
+pn.id as price_nodes_id,
+lz.id as load_zone_id,
+135688 as generation_type_id,
+pr.dalmp,
+pr.rtlmp,
+wf.value as wind_gen_forecast,
+wg.wind_gen as wind_gen_real
+from dim_datetime dt
+inner join stg_prices pr on pr.datetime = dt.datetime
+inner join dim_price_nodes pn on pn.objectid = pr.objectid
+inner join dim_load_zone lz on lz.objectid = 10000712973 and lz.is_current = true
+left join stg_load_forecast wf on wf.datetime = dt.datetime and wf.datatypeid = 9285
+left join stg_real_wind wg on wg.datetime = dt.datetime;
+
+
+
+//INSERT SOLAR
+insert into fact_power_prices(
+datetime_id,
+price_nodes_id,
+load_zone_id,
+generation_type_id,
+dalmp,
+rtlmp,
+solar_gen_forecast,
+solar_gen_real
+)
+select
+dt.id as datetime_id,
+pn.id as price_nodes_id,
+lz.id as load_zone_id,
+135689 as generation_type_id,
+pr.dalmp,
+pr.rtlmp,
+sf.value as solar_gen_forecast,
+sg.solar_gen as solar_gen_real
+from dim_datetime dt
+inner join stg_prices pr on pr.datetime = dt.datetime
+inner join dim_price_nodes pn on pn.objectid = pr.objectid
+inner join dim_load_zone lz on lz.objectid = 10000712973 and lz.is_current = true
+left join stg_load_forecast sf on sf.datetime = dt.datetime and sf.datatypeid = 662
+left join stg_real_solar sg on sg.datetime = dt.datetime;
+
+select generation_type_id, count(*) from fact_power_prices group by generation_type_id;
