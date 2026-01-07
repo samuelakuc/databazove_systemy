@@ -36,7 +36,7 @@ Star schema obsahuje 1 tabuľku faktov fact_power_prices a 4 dimenzie:
 FACT TABLE
 1. PK - id
 2. FK - dim_datetime_id, dim_nodes_id, dim_load_zone_id, dim_generation_type_id
-Hlavné metriky - dalmp, rtlmp, ich stddev hodnoty, load_forecast, net_load_forecast, rt_load, údaje o predikcií a realnej produkcií obnoviteľných zdrojov, net_load_rt
+3. Hlavné metriky - dalmp, rtlmp, ich stddev hodnoty, load_forecast, net_load_forecast, rt_load, údaje o predikcií a realnej produkcií obnoviteľných zdrojov, net_load_rt
 
 ![Star Schema](img/star_schema.png)
 
@@ -50,7 +50,8 @@ Príklad kódu : select * from yes_energy__sample_data.yes_energy_sample.dart_lo
 
 Staging tabuľky boli všetky vytvárané pomocou odporúčaného postupu zo zadania CREATE OR REPLACE TABLE + SELECT * FROM ... 
 
-Príklad kódu: 
+Príklad kódu:
+```
 create or replace table stg_nodes AS
 SELECT objectid, 
 objectname, 
@@ -59,6 +60,7 @@ zone,
 iso
 from yes_energy__sample_data.yes_energy_sample.ds_object_list_sample
 where iso = 'ERCOT';
+```
 
 Pri tvorbe staging tabuliek pomocou týchto dotazov išlo o vytiahnutie potrebných informácií na neskoršiu analýzu zo zdrojových tabuliek datasetu. V tomto konkrétnom príklade vytvárame tabuľku obsahujúcu údaje o objekte (id, name, type) a filtrujeme záznamy podľa parametru iso = ERCOT. Je to z dôvodu, že analýza je zameraná len na tento región.
 
@@ -67,6 +69,7 @@ Pri tvorbe staging tabuliek pomocou týchto dotazov išlo o vytiahnutie potrebn�
 Po vytvorení star schemy, tabulky faktov a tabuliek dimenzii som nahral údaje do tabuliek pomocou INSERT INTO + SELECT DISTINCT zo staging tabuľky do tabuľky dimenzie alebo v prípadne nutnosti pomocou MERGE INTO - využíva target table tgt ktorú upravuje/aktualizuje a source table src z ktorej čerpá aktuálne údaje. V princípe spája príkazy INSERT INTO a UPDATE, použiva sa najmä pri SCD1 a SCD2, kde je dôležitá aktuálnosť údajov a ich vývoj v čase.
 
 Príklad kódu s MERGE INTO:
+```
 merge into dim_price_nodes tgt
 using(
 select distinct
@@ -94,6 +97,7 @@ src.objectid,
 src.objectname,
 src.zone
 );
+```
 
 V tomto konkrétnom kóde potrebujeme merge into na to, aby sa záznam aktualizoval ak už existuje, a aby sa vytvoril nový ak už existuje (when matched, when not matched)
 
@@ -103,6 +107,7 @@ Transform údajov sa čiastočne dial počas celej dobu procesu extract a load, 
 Proces Transform je najviac vidieť najmä na faktovej tabuľke - napríklad window functions:
 
 Príklad kódu:
+```
 select
 dt.id as datetime_id,
 pn.id as price_nodes_id,
@@ -126,10 +131,12 @@ left join stg_load_forecast sf on sf.datetime = dt.datetime and sf.datatypeid = 
 left join stg_real_load ld on ld.datetime = dt.datetime
 left join stg_real_wind wg on wg.datetime = dt.datetime
 left join stg_real_solar sg on sg.datetime = dt.datetime;
+```
 
 V danom kóde môžeme vidieť napĺňanie tabuľky faktov, transformáciu dát pre účely analýzy (window functions stddev) či napríklad net_load_forecast - všetky tieto stĺpce boli transformované na dáta, ktoré využivame neskôr pri vizualizacií a analýze a uľahčujú nám celkovú prácu s tabuľkami. Vo faktovej tabuľke môžeme vidieť mapovanie k dimenziám pomocou join/left join, ako aj používanie správnych SCD typov. Odstránenie duplikácií v dimenziách sme dosiahli pomocou SELECT DISTINT pri INSERT INTO/MERGE INTO.
 
 Príklad kódu:
+```
 insert into dim_datetime(
 datetime,
 marketday,
@@ -154,11 +161,13 @@ offpeak,
 wepeak,
 wdpeak
 FROM stg_times;
+```
 
 ---
 
 # 4.VIZUALIZÁCIA DÁT
 
+```
 //graf1
 select
 dt.marketday,
@@ -170,6 +179,7 @@ where fp.generation_type_id = 135690
 group by dt.marketday
 order by dt.marketday
 limit 200;
+```
 
 ![Graf1](img/graf1.png)
 
@@ -177,6 +187,7 @@ limit 200;
 
 ---
 
+```
 //graf2
 select 
 dt.marketday,
@@ -187,6 +198,7 @@ join dim_datetime dt on fp.datetime_id = dt.id
 group by marketday
 order by marketday
 limit 200;
+```
 
 ![Graf2](img/graf2.png)
 
@@ -194,6 +206,7 @@ limit 200;
 
 ---
 
+```
 //graf3
 select 
 dt.datetime,
@@ -205,10 +218,12 @@ join stg_load_forecast wf on wf.datetime = dt.datetime and wf.datatypeid = 9285
 join stg_real_wind wg on wg.datetime = dt.datetime
 order by dt.datetime
 limit 800;
+```
 
 ![Graf3](img/graf3.png)
 
 
+```
 //graf4
 select 
 dt.datetime,
@@ -220,6 +235,7 @@ join stg_load_forecast sf on sf.datetime = dt.datetime and sf.datatypeid = 662
 join stg_real_solar sg on sg.datetime = dt.datetime
 order by dt.datetime
 limit 800;
+```
 
 ![Graf4](img/graf4.png)
 
@@ -227,6 +243,7 @@ V grafoch 3 a 4 ide o bližšiu analýzu obnoviteľných zdrojov elektrickej ene
 
 ---
 
+```
 //graf5
 select
 dt.datetime,
@@ -238,6 +255,7 @@ left join fact_power_prices sg on sg.datetime_id = dt.id and sg.generation_type_
 group by dt.datetime
 order by dt.datetime
 limit 800;
+```
 
 ![Graf5](img/graf5.png)
 
@@ -245,6 +263,7 @@ Graf číslo 5 zobrazuje percentuálny podiel obnoviteľných zdrojov na výrobe
 
 ---
 
+```
 //graf6
 select
 dt.marketday,
@@ -259,6 +278,7 @@ where f.generation_type_id = 135690
 group by dt.marketday
 order by dt.marketday
 limit 200;
+```
 
 ![Graf6](img/graf6.png)
 
