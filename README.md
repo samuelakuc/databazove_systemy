@@ -34,7 +34,127 @@ Star schema obsahuje 1 tabuľku faktov fact_power_prices a 4 dimenzie:
 4. dim_generation_type - údaje o type produkovanej elektrickej energie (solar,wind,...), napojené na faktovú tabuľku skrz generation_type_id, SCD0
 
 FACT TABLE
-PK - id
-FK - dim_datetime_id, dim_nodes_id, dim_load_zone_id, dim_generation_type_id
+1. PK - id
+2. FK - dim_datetime_id, dim_nodes_id, dim_load_zone_id, dim_generation_type_id
 Hlavné metriky - dalmp, rtlmp, ich stddev hodnoty, load_forecast, net_load_forecast, rt_load, údaje o predikcií a realnej produkcií obnoviteľných zdrojov, net_load_rt
+
 ![Star Schema](img/star_schema.png)
+
+#3. ELT
+
+##3.1 EXTRACT
+Dáta z vyššie uvedených tabuliek boli extrahované z datasetu Yes Energy (yes_energy__sample_data) zo schémy yes_energy_sample
+Príklad kódu : select * from yes_energy__sample_data.yes_energy_sample.dart_loads_sample
+
+Staging tabuľky boli všetky vytvárané pomocou odporúčaného postupu zo zadania CREATE OR REPLACE TABLE + SELECT * FROM ... 
+
+Príklad kódu: 
+create or replace table stg_nodes AS
+SELECT objectid, 
+objectname, 
+objecttype,
+zone,
+iso
+from yes_energy__sample_data.yes_energy_sample.ds_object_list_sample
+where iso = 'ERCOT';
+
+Pri tvorbe staging tabuliek pomocou týchto dotazov išlo o vytiahnutie potrebných informácií na neskoršiu analýzu zo zdrojových tabuliek datasetu. V tomto konkrétnom príklade vytvárame tabuľku obsahujúcu údaje o objekte (id, name, type) a filtrujeme záznamy podľa parametru iso = ERCOT. Je to z dôvodu, že analýza je zameraná len na tento región.
+
+##3.2 LOAD
+
+Po vytvorení star schemy, tabulky faktov a tabuliek dimenzii som nahral údaje do tabuliek pomocou INSERT INTO + SELECT DISTINCT zo staging tabuľky do tabuľky dimenzie alebo v prípadne nutnosti pomocou MERGE INTO - využíva target table tgt ktorú upravuje/aktualizuje a source table src z ktorej čerpá aktuálne údaje. V princípe spája príkazy INSERT INTO a UPDATE, použiva sa najmä pri SCD1 a SCD2, kde je dôležitá aktuálnosť údajov a ich vývoj v čase.
+
+Príklad kódu s MERGE INTO:
+merge into dim_price_nodes tgt
+using(
+select distinct
+objectid,
+objectname,
+zone
+from stg_nodes
+where objecttype = 'price_node'
+) src
+on tgt.objectid = src.objectid
+
+when matched then
+update set
+tgt.objectname = src.objectname,
+tgt.zone = src.zone
+
+when not matched then
+insert(
+objectid,
+objectname,
+zone
+)
+values(
+src.objectid,
+src.objectname,
+src.zone
+);
+
+V tomto konkrétnom kóde potrebujeme merge into na to, aby sa záznam aktualizoval ak už existuje, a aby sa vytvoril nový ak už existuje (when matched, when not matched)
+
+##3.3 TRANSFORM
+
+Transform údajov sa čiastočne dial počas celej dobu procesu extract a load, kde sme vybrali najmä údaje potrebné na analýzu a na dosiahnutie jej cieľa, či už do staging tabuliek alebo do faktovej tabuľky a dimenzií. 
+Proces Transform je najviac vidieť najmä na faktovej tabuľke - napríklad window functions:
+
+Príklad kódu:
+select
+dt.id as datetime_id,
+pn.id as price_nodes_id,
+lz.id as load_zone_id,
+135690 as generation_type_id,
+pr.dalmp,
+pr.rtlmp,
+stddev(pr.dalmp) over(partition by dt.marketday) as daily_dalmp_stddev,
+stddev(pr.dalmp) over(partition by month(dt.marketday)) as monthly_dalmp_stddev,
+lf.value as load_forecast,
+lf.value - wf.value - sf.value as net_load_forecast,
+ld.load_gen as rt_load,
+ld.load_gen - wg.wind_gen - sg.solar_gen as net_load_rt
+from dim_datetime dt
+inner join stg_prices pr on pr.datetime = dt.datetime
+inner join dim_price_nodes pn on pn.objectid = pr.objectid
+inner join dim_load_zone lz on lz.objectid = 10000712973 and lz.is_current = true
+left join stg_load_forecast lf on lf.datetime = dt.datetime and lf.datatypeid = 19060
+left join stg_load_forecast wf on wf.datetime = dt.datetime and wf.datatypeid = 9285
+left join stg_load_forecast sf on sf.datetime = dt.datetime and sf.datatypeid = 662
+left join stg_real_load ld on ld.datetime = dt.datetime
+left join stg_real_wind wg on wg.datetime = dt.datetime
+left join stg_real_solar sg on sg.datetime = dt.datetime;
+
+V danom kóde môžeme vidieť napĺňanie tabuľky faktov, transformáciu dát pre účely analýzy (window functions stddev) či napríklad net_load_forecast - všetky tieto stĺpce boli transformované na dáta, ktoré využivame neskôr pri vizualizacií a analýze a uľahčujú nám celkovú prácu s tabuľkami. Vo faktovej tabuľke môžeme vidieť mapovanie k dimenziám pomocou join/left join, ako aj používanie správnych SCD typov. Odstránenie duplikácií v dimenziách sme dosiahli pomocou SELECT DISTINT pri INSERT INTO/MERGE INTO.
+
+Príklad kódu:
+insert into dim_datetime(
+datetime,
+marketday,
+hour,
+day,
+month,
+year,
+onpeak,
+offpeak,
+wepeak,
+wdpeak
+)
+select distinct
+datetime,
+marketday,
+extract(hour FROM datetime) as hour,
+extract(day FROM datetime) as day,
+extract(month FROM datetime) as month,
+extract(year FROM datetime) as year,
+onpeak,
+offpeak,
+wepeak,
+wdpeak
+FROM stg_times;
+
+---
+
+#4.VIZUALIZÁCIA DÁT
+
+
